@@ -59,11 +59,21 @@ public class MateriaService {
                         "Materia non trovata con id: " + id));
 
         // Aggiorna solo i campi non nulli (partial update)
-        if (dto.nome() != null)           materia.setNome(dto.nome());
-        if (dto.descrizione() != null)    materia.setDescrizione(dto.descrizione());
-        if (dto.oreSettimanali() != null) materia.setOreSettimanali(dto.oreSettimanali());
-        if (dto.tipoMateria() != null)    materia.setTipoMateria(dto.tipoMateria());
-        if (dto.active() != null)         materia.setActive(dto.active());
+        if (dto.nome() != null) {
+            materia.setNome(dto.nome());
+        }
+        if (dto.descrizione() != null) {
+            materia.setDescrizione(dto.descrizione());
+        }
+        if (dto.oreSettimanali() != null) {
+            materia.setOreSettimanali(dto.oreSettimanali());
+        }
+        if (dto.tipoMateria() != null) {
+            materia.setTipoMateria(dto.tipoMateria());
+        }
+        if (dto.active() != null) {
+            materia.setActive(dto.active());
+        }
 
         return new MateriaResponseDTO(this.materiaRepository.save(materia));
     }

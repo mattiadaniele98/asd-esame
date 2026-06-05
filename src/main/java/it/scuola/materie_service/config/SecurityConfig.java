@@ -61,14 +61,16 @@ public class SecurityConfig {
                         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                         response.setContentType("application/json");
                         response.getWriter().write(
-                                "{\"status\":401,\"error\":\"Non autorizzato\",\"message\":\"Token JWT mancante o non valido\"}"
+                                "{\"status\":401,\"error\":\"Non autorizzato\","
+                                + "\"message\":\"Token JWT mancante o non valido\"}"
                         );
                     })
                     .accessDeniedHandler((request, response, accessDeniedException) -> {
                         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                         response.setContentType("application/json");
                         response.getWriter().write(
-                                "{\"status\":403,\"error\":\"Accesso negato\",\"message\":\"Ruolo non autorizzato per questa operazione\"}"
+                                "{\"status\":403,\"error\":\"Accesso negato\","
+                                + "\"message\":\"Ruolo non autorizzato per questa operazione\"}"
                         );
                     })
             )

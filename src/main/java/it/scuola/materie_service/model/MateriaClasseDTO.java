@@ -16,4 +16,4 @@ public record MateriaClasseDTO(
 
         // Opzionale: se non specificato si usano le ore standard della materia
         Integer oreSettimanaliPersonalizzate
-) {}
+) { }
