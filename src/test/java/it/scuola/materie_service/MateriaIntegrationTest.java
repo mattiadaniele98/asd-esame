@@ -5,13 +5,15 @@ import it.scuola.materie_service.security.JwtService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.WebApplicationContext;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -27,19 +29,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * Differenza rispetto ai test unitari:
  * - @SpringBootTest avvia il contesto Spring completo (controller + service + repository + DB)
- * - MockMvc fa chiamate HTTP reali agli endpoint
+ * - MockMvc viene costruito manualmente dal WebApplicationContext
  * - Si usano dati reali nel database (ogni test è isolato con @Transactional)
  *
- * L'unica cosa "finta" è il JwtService (@MockBean):
+ * L'unica cosa "finta" è il JwtService (@MockitoBean):
  * serve per bypassare la validazione del token senza avere utenti-service attivo.
  */
 @SpringBootTest
-@AutoConfigureMockMvc
 @ActiveProfiles("sviluppo")
 @Transactional
 class MateriaIntegrationTest {
 
     @Autowired
+    private WebApplicationContext wac;
+
     private MockMvc mockMvc;
 
     @Autowired
@@ -58,6 +61,12 @@ class MateriaIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        // Costruisce MockMvc dal contesto Spring con la security chain attiva
+        mockMvc = MockMvcBuilders
+                .webAppContextSetup(wac)
+                .apply(SecurityMockMvcConfigurers.springSecurity())
+                .build();
+
         // Per ogni test: il token è valido, l'utente ha ruolo SEGRETERIA
         when(jwtService.isTokenValid(any())).thenReturn(true);
         when(jwtService.extractSubject(any())).thenReturn("test@scuola.it");
