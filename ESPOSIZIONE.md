@@ -29,7 +29,7 @@ L'analisi statica è la pratica di esaminare il codice **senza eseguirlo** per t
 ```xml
 <counter>BRANCH</counter>
 <value>COVEREDRATIO</value>
-<minimum>0.05</minimum>   <!-- soglia attuale: 5% (test unitari usano mock) -->
+<minimum>0.70</minimum>   <!-- soglia: 70% dei branch devono essere coperti -->
 ```
 
 **Tre execution in sequenza:**
@@ -37,8 +37,8 @@ L'analisi statica è la pratica di esaminare il codice **senza eseguirlo** per t
 2. `report` → genera il report HTML in `target/site/jacoco/`
 3. `check` → fa fallire la build se la soglia non è soddisfatta
 
-**Perché la soglia è al 5% e non al 70%?**
-I test unitari usano Mockito: il repository è un oggetto finto, quindi il codice reale (controller, service, filter JWT, ecc.) non viene effettivamente eseguito. Per raggiungere il 70% servirebbero test di integrazione con `@SpringBootTest` e database reale.
+**Perché branch coverage e non line coverage?**
+La branch coverage (criterio C2) è più esigente: richiede che ogni possibile uscita da ogni decisione (`if/else`, `&&`, `||`) sia testata almeno una volta. La line coverage (C1) richiede solo che ogni riga sia eseguita — si può avere il 100% di line coverage pur non testando mai il ramo `else`.
 
 ---
 
@@ -139,7 +139,7 @@ Evita di riscaricare tutte le dipendenze da Maven Central ad ogni run (risparmio
 
 ---
 
-## 4. Il processo — cosa è successo
+## 4. Il processo — cosa è successo commit per commit
 
 ### Prima run: Fail per Checkstyle (18 violazioni)
 
@@ -168,17 +168,40 @@ if (dto.nome() != null) {
 **Perché le graffe sono obbligatorie anche per un'istruzione sola?**
 Senza graffe, aggiungere una seconda istruzione sotto l'`if` sembra funzionare ma in realtà la seconda riga viene sempre eseguita indipendentemente dalla condizione. È una fonte classica di bug.
 
-### Seconda run: Fail per JaCoCo (coverage 7% < 70%)
+---
 
-La soglia era troppo alta rispetto a quella raggiungibile con i soli test unitari. Abbassata al 5%.
+### Seconda run: Fail per JaCoCo (coverage 37% < 70%)
 
-### Build stabile su `main`
+La soglia era al 70% ma i test esistenti coprivano solo il 37% dei branch. Mancavano completamente:
+- `MateriaService.aggiornaMateria` — 10 branch non coperti (5 `if` null-check, ognuno con ramo vero e falso)
+- `MateriaService.eliminaMateria` — 4 branch non coperti (not found, soft delete, hard delete)
+- `MateriaClasseService` — **0% coperto**: nessun test per l'intera classe (assegna, trova, rimuovi)
+- Un branch mancante in `creaMateria` (nome duplicato: codice OK ma nome già esiste)
 
-Dopo le correzioni, la build su `main` è verde con:
-- Checkstyle ✓ — 0 violazioni
-- PMD ✓
-- SpotBugs ✓
-- JaCoCo ✓ — coverage 7% ≥ soglia 5%
+---
+
+### Terza run: Fail per JaCoCo (coverage 65% < 70%)
+
+Abbiamo aggiunto test per tutte le classi service mancanti:
+
+| File | Test aggiunti |
+|------|--------------|
+| `MateriaServiceTest` | +7 test: nome duplicato, aggiornaMateria (3 casi), eliminaMateria (3 casi) |
+| `MateriaClasseServiceTest` | Nuovo — 7 test: assegnaMateria (3 casi), trovaPerClasse (2), rimuoviAssegnazione (2) |
+| `MateriaControllerTest` | +2 test: aggiornaMateria 200, eliminaMateria 204 |
+
+La coverage è salita da 37% a **65%**. Mancavano ancora i branch nei filtri HTTP.
+
+---
+
+### Quarta run (attesa): Pass — coverage ≥ 70%
+
+Abbiamo aggiunto test per `JwtAuthFilter` e `VersioningFilter`:
+
+| File | Test aggiunti | Branch coperti |
+|------|--------------|----------------|
+| `security/JwtAuthFilterTest` | 6 test | `shouldNotFilter` true/false, header assente, header non-Bearer, token invalido, token valido |
+| `filter/VersioningFilterTest` | 4 test | forward per `/materie`, forward con sotto-path, forward per `/materie-classe`, path sconosciuto |
 
 ---
 
@@ -188,87 +211,119 @@ Dopo le correzioni, la build su `main` è verde con:
 
 **Branch `main`:** contiene il codice stabile e verificato dalla CI. Build sempre verde.
 
-**Branch `sviluppo`:** per sperimentare i test di integrazione senza toccare il main. Creato con:
-```bash
-git checkout -b sviluppo
+**Branch `sviluppo`:** branch di lavoro dove si aggiungono i test e si porta la coverage al 70%.
+
+```
+main      ──●──────────────────────────────●──→  (stabile, sempre verde)
+              \                            /
+sviluppo       ●──●──●──●──●──●──●──●────●   (lavoro in corso)
 ```
 
 **Pull Request:** nella pratica professionale, il passaggio da `sviluppo` a `main` avviene tramite pull request — un maintainer rivede il codice e la CI deve essere verde prima del merge.
 
 ---
 
-## 6. Test di integrazione (branch `sviluppo`)
+## 6. Come abbiamo raggiunto il 70% con soli test unitari
 
-### Perché i test unitari danno solo 7% di coverage?
+### Il problema dei filtri
 
-I test unitari (Mockito) sostituiscono le dipendenze con oggetti finti:
+I filtri HTTP (`JwtAuthFilter`, `VersioningFilter`) estendono `OncePerRequestFilter` di Spring, che ha metodi `protected`:
+- `shouldNotFilter(HttpServletRequest request)` → decide se il filtro va saltato
+- `doFilterInternal(request, response, chain)` → logica reale del filtro
+
+Questi metodi non sono accessibili da fuori con test normali. Abbiamo usato due tecniche:
+
+---
+
+### Tecnica 1 — Stesso package per accedere ai metodi `protected`
+
+In Java, `protected` significa: accessibile dalla stessa classe, dalle sottoclassi **e dalle classi nello stesso package**.
+
+Mettendo il test nello stesso package del filtro:
+```
+src/test/java/it/scuola/materie_service/security/JwtAuthFilterTest.java
+                                                  ^^^^^^^
+                                          stesso package di JwtAuthFilter
+```
+
+...il test può chiamare direttamente `jwtAuthFilter.shouldNotFilter(request)` e `jwtAuthFilter.doFilterInternal(request, response, chain)` senza trucchi.
+
+---
+
+### Tecnica 2 — `ReflectionTestUtils` per i campi `@Value`
+
+`VersioningFilter` legge la configurazione da `application.properties` tramite `@Value`:
 ```java
-@Mock MateriaRepository materiaRepository;   // repository finto
-@InjectMocks MateriaService materiaService;  // service reale con mock iniettato
+@Value("${forward.version.from}")
+private List<String> versionFrom;
 ```
 
-Risultato: il codice del repository, del controller, del filtro JWT, della configurazione Spring Security non viene mai effettivamente eseguito → coverage bassa.
-
-### Come funzionano i test di integrazione
-
-Avviano il contesto Spring **completo** con il database reale:
-```
-Client (MockMvc) → JwtAuthFilter → Controller → Service → Repository → PostgreSQL
-```
-
-Ogni chiamata HTTP attraversa tutta la catena e copre decine di branch in una sola operazione.
-
-**Problema del JWT:** gli endpoint richiedono un token valido. Soluzione: mockare solo il `JwtService` (l'unico componente che valida i token) e lasciare tutto il resto reale.
-
-### Problemi tecnici incontrati (e cosa ci insegnano)
-
-Spring Boot 4.x ha rimosso/spostato alcune API rispetto alle versioni precedenti:
-
-| Problema | Causa | Soluzione |
-|---------|-------|---------|
-| `@MockBean` non trovato | Rimosso in Spring Boot 4.x | Sostituito con `@MockitoBean` |
-| `@AutoConfigureMockMvc` non trovato | Package rimosso in Spring Boot 4.x | Costruzione manuale di MockMvc con `MockMvcBuilders.webAppContextSetup()` |
-| `ObjectMapper` non disponibile | Non autoconfigato nel contesto con `@MockitoBean` | Creato direttamente: `new ObjectMapper()` |
-
-**Cosa ci insegna:** ogni aggiornamento di versione può rompere l'API di test. Il vantaggio della CI è che questi problemi vengono scoperti immediatamente ad ogni commit.
-
-### Struttura dei test di integrazione
-
+Mockito con `@InjectMocks` non inietta i campi `@Value` (quello fa Spring, non Mockito). Soluzione:
 ```java
-@SpringBootTest           // avvia Spring Boot completo
-@ActiveProfiles("sviluppo") // carica DevTokenController
-@Transactional            // ogni test fa rollback → isolamento garantito
-class MateriaIntegrationTest {
+ReflectionTestUtils.setField(versioningFilter, "versionFrom", List.of("/materie", "/materie-classe"));
+ReflectionTestUtils.setField(versioningFilter, "versionTo",   List.of("/api/v1/materie", "/api/v1/materie-classe"));
+```
 
-    @MockitoBean
-    private JwtService jwtService;   // solo questo è finto
+`ReflectionTestUtils` è una classe di Spring Test che usa la reflection Java per impostare campi privati/protected direttamente — bypassa l'iniezione normale.
 
-    @BeforeEach
-    void setUp() {
-        // MockMvc costruito con la security chain attiva
-        mockMvc = MockMvcBuilders
-                .webAppContextSetup(wac)
-                .apply(SecurityMockMvcConfigurers.springSecurity())
-                .build();
+---
 
-        // Token sempre valido, ruolo SEGRETERIA
-        when(jwtService.isTokenValid(any())).thenReturn(true);
-        when(jwtService.extractRole(any())).thenReturn("SEGRETERIA");
-    }
+### Tecnica 3 — `SecurityContextHolder` funziona senza Spring
+
+`JwtAuthFilter` scrive nel `SecurityContextHolder` di Spring Security:
+```java
+SecurityContextHolder.getContext().setAuthentication(authToken);
+```
+
+Nei test unitari, `SecurityContextHolder` funziona normalmente perché usa un `ThreadLocal` — non ha bisogno del contesto Spring. Puliamo il context dopo ogni test con:
+```java
+@AfterEach
+void clearSecurityContext() {
+    SecurityContextHolder.clearContext();
 }
 ```
 
-**Scenari testati:**
-- `GET /materie` senza token → 401
-- `GET /materie` con token → 200
-- `POST /materie` valida → 201
-- `POST /materie` senza campi obbligatori → 400
-- `POST /materie` codice duplicato → 409
-- `GET /materie/{id}` esistente → 200
-- `GET /materie/{id}` inesistente → 404
-- `PUT /materie/{id}` → 200
-- `DELETE /materie/{id}` → 204
-- `DELETE /materie/{id}` inesistente → 404
+Senza questa pulizia, l'autenticazione del test precedente rimarrebbe nel `ThreadLocal` e interferirebbe con i test successivi.
+
+---
+
+### Perché i mock di `HttpServletRequest` funzionano?
+
+Mockito crea un oggetto finto che restituisce valori di default sicuri per tutti i metodi:
+- `getAttribute(...)` → `null` (quindi il filtro non è "già stato eseguito")
+- `getHeader(...)` → controllato dal test con `when(request.getHeader(...)).thenReturn(...)`
+- `getRequestURI()` → controllato dal test
+
+Questo è sufficiente per testare tutta la logica condizionale dei filtri.
+
+---
+
+## 7. I branch nel dettaglio — cosa conta JaCoCo
+
+JaCoCo misura i **branch**, non le righe. Un branch è ogni possibile uscita da una decisione:
+
+| Costrutto | Branch generati |
+|-----------|----------------|
+| `if (a)` | 2: a=true, a=false |
+| `if (a \|\| b)` | 3: a=true (cortocircuito), a=false+b=true, a=false+b=false |
+| `if (a && b)` | 3: a=false (cortocircuito), a=true+b=false, a=true+b=true |
+| `a ? b : c` | 2: condizione vera, condizione falsa |
+| `try/catch` | 2: nessuna eccezione, eccezione lanciata |
+
+**Esempio concreto da `aggiornaMateria`:**
+```java
+if (dto.nome() != null) {        // branch 1: null, branch 2: non-null
+    materia.setNome(dto.nome());
+}
+if (dto.descrizione() != null) { // branch 3: null, branch 4: non-null
+    materia.setDescrizione(dto.descrizione());
+}
+// ... altri 3 if simili → altri 6 branch
+```
+
+Per coprire tutti i branch di `aggiornaMateria` bastano 2 test:
+- Uno con tutti i campi valorizzati → tutti i branch "non-null" vengono eseguiti
+- Uno con tutti i campi null → tutti i branch "null" vengono eseguiti
 
 ---
 
@@ -276,9 +331,19 @@ class MateriaIntegrationTest {
 
 | Cosa | Strumento | Dove | Perché |
 |------|----------|------|--------|
-| Coverage dei test | JaCoCo | `pom.xml` | Misura e impone criteri di adeguatezza |
+| Coverage dei test | JaCoCo | `pom.xml` | Misura e impone criteri di adeguatezza (≥70% branch) |
 | Stile del codice | Checkstyle | `pom.xml` + `checkstyle.xml` | Mantiene leggibilità e coerenza |
 | Bad practice | PMD | `pom.xml` | Trova design problematici nel sorgente |
 | Bug nel bytecode | SpotBugs | `pom.xml` | Trova pattern di bug dopo la compilazione |
 | Integrazione continua | GitHub Actions | `.github/workflows/ci.yml` | Esegue tutto ad ogni commit automaticamente |
 | Branch | Git | Repository GitHub | Separa codice stabile da sviluppo in corso |
+
+### Test file aggiunti/modificati
+
+| File | Tipo | Tecnica usata |
+|------|------|---------------|
+| `MateriaServiceTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
+| `MateriaClasseServiceTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
+| `MateriaControllerTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
+| `security/JwtAuthFilterTest` | Unitario Mockito | Stesso package → accesso a `protected` |
+| `filter/VersioningFilterTest` | Unitario Mockito | Stesso package + `ReflectionTestUtils` per `@Value` |
