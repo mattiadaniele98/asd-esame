@@ -10,6 +10,10 @@ WORKDIR /app
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 
+# Copia i file di configurazione dell'analisi statica (richiesti da Checkstyle e SpotBugs)
+COPY checkstyle.xml .
+COPY spotbugs-exclude.xml .
+
 # Copia il codice sorgente e compila (salta i test per velocizzare la build)
 COPY src ./src
 RUN mvn clean package -DskipTests -B
