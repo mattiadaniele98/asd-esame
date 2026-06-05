@@ -33,12 +33,12 @@ jobs:
 
       # Step 1: scarica il codice del repository sul runner
       - name: Checkout del codice
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Step 2: installa Java 21 (Temurin = distribuzione open source di Eclipse)
       # cache: 'maven' mette in cache ~/.m2 per non riscaricare le dipendenze ad ogni run
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
