@@ -4,7 +4,9 @@ import it.scuola.materie_service.exception.ResourceNotFoundException;
 import it.scuola.materie_service.model.Materia;
 import it.scuola.materie_service.model.MateriaDTO;
 import it.scuola.materie_service.model.MateriaResponseDTO;
+import it.scuola.materie_service.model.MateriaUpdateDTO;
 import it.scuola.materie_service.model.TipoMateria;
+import it.scuola.materie_service.service.MateriaClasseRepository;
 import it.scuola.materie_service.service.MateriaRepository;
 import it.scuola.materie_service.service.MateriaService;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +45,9 @@ class MateriaServiceTest {
     // ── Mock delle dipendenze ──────────────────────────────────────────────────
     @Mock
     private MateriaRepository materiaRepository;
+
+    @Mock
+    private MateriaClasseRepository materiaClasseRepository;
 
     // ── Classe sotto test (con i mock iniettati) ───────────────────────────────
     @InjectMocks
@@ -173,5 +178,109 @@ class MateriaServiceTest {
         assertThatThrownBy(() -> materiaService.trovaPerID(idInesistente))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining(idInesistente.toString());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TEST: creaMateria — nome duplicato (branch mancante)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("creaMateria - dovrebbe lanciare eccezione se nome già esiste")
+    void creaMateria_dovrebbeLanciareEccezioneSeNomeDuplicato() {
+        // Arrange: codice OK, ma nome già presente
+        MateriaDTO dto = new MateriaDTO("Matematica", "MAT", null, 5, TipoMateria.TEORICA);
+        when(materiaRepository.existsByCodice("MAT")).thenReturn(false);
+        when(materiaRepository.existsByNome("Matematica")).thenReturn(true);
+
+        // Assert
+        assertThatThrownBy(() -> materiaService.creaMateria(dto))
+                .isInstanceOf(RuntimeException.class);
+        verify(materiaRepository, never()).save(any());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TEST: aggiornaMateria
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("aggiornaMateria - dovrebbe lanciare eccezione se ID non esiste")
+    void aggiornaMateria_dovrebbeLanciareEccezioneSeIDNonEsiste() {
+        UUID idInesistente = UUID.randomUUID();
+        when(materiaRepository.findById(idInesistente)).thenReturn(Optional.empty());
+
+        MateriaUpdateDTO dto = new MateriaUpdateDTO("Fisica", null, null, null, null);
+
+        assertThatThrownBy(() -> materiaService.aggiornaMateria(idInesistente, dto))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("aggiornaMateria - dovrebbe aggiornare tutti i campi quando sono valorizzati")
+    void aggiornaMateria_dovrebbeAggiornareTuttiICampi() {
+        when(materiaRepository.findById(idEsistente)).thenReturn(Optional.of(materiaEsistente));
+        when(materiaRepository.save(any(Materia.class))).thenReturn(materiaEsistente);
+
+        // Tutti i campi non null → tutti i branch if=true vengono eseguiti
+        MateriaUpdateDTO dto = new MateriaUpdateDTO("Fisica", "Fisica applicata", 4, TipoMateria.PRATICA, false);
+
+        MateriaResponseDTO risultato = materiaService.aggiornaMateria(idEsistente, dto);
+
+        assertThat(risultato).isNotNull();
+        verify(materiaRepository, times(1)).save(materiaEsistente);
+    }
+
+    @Test
+    @DisplayName("aggiornaMateria - non dovrebbe modificare i campi nulli")
+    void aggiornaMateria_nonDovrebbeAggiornareCampiNull() {
+        when(materiaRepository.findById(idEsistente)).thenReturn(Optional.of(materiaEsistente));
+        when(materiaRepository.save(any(Materia.class))).thenReturn(materiaEsistente);
+
+        // Tutti i campi null → tutti i branch if=false vengono eseguiti
+        MateriaUpdateDTO dto = new MateriaUpdateDTO(null, null, null, null, null);
+
+        MateriaResponseDTO risultato = materiaService.aggiornaMateria(idEsistente, dto);
+
+        assertThat(risultato).isNotNull();
+        assertThat(materiaEsistente.getNome()).isEqualTo("Matematica");
+        verify(materiaRepository, times(1)).save(materiaEsistente);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TEST: eliminaMateria
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("eliminaMateria - dovrebbe lanciare eccezione se ID non esiste")
+    void eliminaMateria_dovrebbeLanciareEccezioneSeIDNonEsiste() {
+        UUID idInesistente = UUID.randomUUID();
+        when(materiaRepository.findById(idInesistente)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> materiaService.eliminaMateria(idInesistente))
+                .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("eliminaMateria - soft delete se la materia ha riferimenti in materie_classe")
+    void eliminaMateria_dovrebbeFareSoftDeleteSeHaRiferimenti() {
+        when(materiaRepository.findById(idEsistente)).thenReturn(Optional.of(materiaEsistente));
+        when(materiaClasseRepository.existsByMateriaId(idEsistente)).thenReturn(true);
+
+        materiaService.eliminaMateria(idEsistente);
+
+        assertThat(materiaEsistente.isActive()).isFalse();
+        verify(materiaRepository, times(1)).save(materiaEsistente);
+        verify(materiaRepository, never()).deleteById(any());
+    }
+
+    @Test
+    @DisplayName("eliminaMateria - hard delete se la materia non ha riferimenti")
+    void eliminaMateria_dovrebbeFareHardDeleteSeNonHaRiferimenti() {
+        when(materiaRepository.findById(idEsistente)).thenReturn(Optional.of(materiaEsistente));
+        when(materiaClasseRepository.existsByMateriaId(idEsistente)).thenReturn(false);
+
+        materiaService.eliminaMateria(idEsistente);
+
+        verify(materiaRepository, never()).save(any());
+        verify(materiaRepository, times(1)).deleteById(idEsistente);
     }
 }

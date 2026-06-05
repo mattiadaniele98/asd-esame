@@ -1,4 +1,4 @@
-name: CI
+name: CI/CD
 
 # La pipeline si avvia ad ogni push e ad ogni pull request, su qualsiasi branch
 on:
@@ -8,6 +8,8 @@ on:
     branches: ["**"]
 
 jobs:
+
+  # ── Job 1: CI — Build, test e analisi statica ────────────────────────────────
   build:
     name: Build, Test e Analisi Statica
     runs-on: ubuntu-latest   # macchina virtuale Linux fornita da GitHub
@@ -33,12 +35,12 @@ jobs:
 
       # Step 1: scarica il codice del repository sul runner
       - name: Checkout del codice
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Step 2: installa Java 21 (Temurin = distribuzione open source di Eclipse)
       # cache: 'maven' mette in cache ~/.m2 per non riscaricare le dipendenze ad ogni run
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -57,3 +59,34 @@ jobs:
           DB_USER: scuola
           DB_PASSWORD: scuola_pass
           SPRING_PROFILES_ACTIVE: sviluppo
+
+  # ── Job 2: CD — Build e push immagine Docker ─────────────────────────────────
+  # Eseguito SOLO dopo che il job "build" è verde E solo su push a main
+  # (non gira sui branch di sviluppo né sulle pull request)
+  docker:
+    name: Build e Push immagine Docker
+    runs-on: ubuntu-latest
+    needs: build   # dipende da "build": parte solo se CI è verde
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    # Permessi necessari per scrivere sul GitHub Container Registry (ghcr.io)
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+
+      - name: Checkout del codice
+        uses: actions/checkout@v5
+
+      # Login su GitHub Container Registry usando il token automatico di GitHub Actions
+      - name: Login a GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      # Build dell'immagine usando il Dockerfile esistente
+      - name: Build immagine Docker
+        run: docker build -t ghcr.io/${{ github.repository_owner }}/materie-service:latest .
+
+      # Push dell'immagine sul registry — visibile nella sezione "Packages" del profilo GitHub
+      - name: Push immagine Docker su ghcr.io
+        run: docker push ghcr.io/${{ github.repository_owner }}/materie-service:latest
