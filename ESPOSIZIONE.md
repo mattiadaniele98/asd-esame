@@ -91,6 +91,8 @@ McCabe stesso ha suggerito 10 come soglia: oltre questo valore il codice diventa
 
 **Differenza con Checkstyle:** Checkstyle → stile; SpotBugs → bug potenziali nel bytecode.
 
+**Come escludere falsi positivi:** con un file `spotbugs-exclude.xml` referenziato nel `pom.xml` tramite `<excludeFilterFile>`. Ogni esclusione va documentata con un commento che spiega perché il warning non è applicabile.
+
 ---
 
 ## 2. `checkstyle.xml` — le regole
@@ -102,32 +104,60 @@ Il file `checkstyle.xml` è necessario perché Checkstyle non sa quali regole ap
 
 ---
 
-## 3. Pipeline CI con GitHub Actions
+## 3. Pipeline CI/CD con GitHub Actions
 
 **Cos'è la CI (Continuous Integration)?**
 La pratica di integrare le modifiche fatte da diversi sviluppatori man mano che vengono completate, anziché aspettare che tutte le parti siano pronte.
+
+**Cos'è la CD (Continuous Delivery/Deployment)?**
+Il passo successivo alla CI: automatizza la consegna dell'artefatto prodotto (in questo caso l'immagine Docker) verso un registry o un ambiente di esecuzione.
 
 **File:** `.github/workflows/ci.yml`
 
 **Trigger:** la pipeline parte ad ogni `push` e ad ogni `pull_request` su qualsiasi branch.
 
-**Struttura del job:**
+**Struttura — due job in sequenza:**
 
 ```
-ubuntu-latest (VM pulita fornita da GitHub)
+Job 1: build  (CI — gira su tutti i branch e PR)
   │
-  ├── Servizio PostgreSQL (container avviato prima degli step)
-  │
+  ubuntu-latest
+  ├── Servizio PostgreSQL
   ├── Step 1: Checkout del codice
-  ├── Step 2: Setup Java 21 (Temurin, con cache Maven)
+  ├── Step 2: Setup Java 21 (cache Maven)
   └── Step 3: mvn verify
-              │
-              ├── validate    → Checkstyle
-              ├── compile     → compilazione sorgente
-              ├── test        → test + JaCoCo report
-              ├── package     → creazione JAR
-              └── verify      → JaCoCo check + PMD + SpotBugs
+              ├── validate  → Checkstyle
+              ├── compile   → compilazione sorgente
+              ├── test      → test + JaCoCo report
+              ├── package   → creazione JAR
+              └── verify    → JaCoCo check + PMD + SpotBugs
+
+Job 2: docker  (CD — gira SOLO su push a main, dopo build verde)
+  │
+  needs: build          ← dipende dal job 1
+  if: push su main      ← non gira su PR o altri branch
+  │
+  ubuntu-latest
+  ├── Step 1: Checkout del codice
+  ├── Step 2: Login su ghcr.io (GitHub Container Registry)
+  ├── Step 3: docker build → immagine Docker
+  └── Step 4: docker push  → ghcr.io/{owner}/materie-service:latest
 ```
+
+**Perché due job separati e non due step nello stesso job?**
+Separare CI e CD in job distinti permette di:
+- Vedere chiaramente nel tab Actions quale parte ha fallito
+- Eseguire il CD solo su push a `main` (con `if:`) senza dover mettere condizioni in mezzo agli step del build
+- In futuro aggiungere altri job (es. deploy su server) senza toccare il job di build
+
+**Perché `needs: build`?**
+Il job `docker` parte solo se il job `build` ha completato con successo. Se i test falliscono, l'immagine Docker non viene mai costruita né pubblicata — non si distribuisce codice rotto.
+
+**Perché solo su `push` a `main` e non sulle PR?**
+Sulle PR si vuole solo verificare che il codice funzioni (CI). L'immagine Docker viene prodotta solo quando il codice è già stato revisionato e integrato nel branch stabile.
+
+**GitHub Container Registry (ghcr.io):**
+Registry integrato in GitHub. L'autenticazione usa `GITHUB_TOKEN`, un token temporaneo generato automaticamente da GitHub Actions per ogni run — nessuna credenziale da configurare manualmente. L'immagine pubblicata è visibile nella sezione "Packages" del profilo GitHub.
 
 **Perché il servizio PostgreSQL nel CI?**
 Il test `MaterieServiceApplicationTests` usa `@SpringBootTest` che avvia il contesto Spring completo e tenta di connettersi al DB. Senza PostgreSQL, il test fallirebbe. Il `--health-cmd pg_isready` garantisce che Maven parta solo quando il DB è pronto.
@@ -135,7 +165,7 @@ Il test `MaterieServiceApplicationTests` usa `@SpringBootTest` che avvia il cont
 **Perché `cache: 'maven'`?**
 Evita di riscaricare tutte le dipendenze da Maven Central ad ogni run (risparmio di tempo e banda).
 
-**Cos'è un job?** Un'esecuzione concreta della pipeline. Ogni commit genera un nuovo job che compare nel tab Actions di GitHub con esito verde (Pass) o rosso (Fail).
+**Cos'è un job?** Un'esecuzione concreta di una parte della pipeline. Ogni commit genera una run con uno o più job, visibili nel tab Actions di GitHub con esito verde (Pass) o rosso (Fail).
 
 ---
 
@@ -194,9 +224,9 @@ La coverage è salita da 37% a **65%**. Mancavano ancora i branch nei filtri HTT
 
 ---
 
-### Quarta run (attesa): Pass — coverage ≥ 70%
+### Quarta run: Fail per JaCoCo (coverage 65% < 70%)
 
-Abbiamo aggiunto test per `JwtAuthFilter` e `VersioningFilter`:
+Aggiunti test per `JwtAuthFilter` e `VersioningFilter`:
 
 | File | Test aggiunti | Branch coperti |
 |------|--------------|----------------|
@@ -205,21 +235,81 @@ Abbiamo aggiunto test per `JwtAuthFilter` e `VersioningFilter`:
 
 ---
 
-## 5. Gestione branch
+### Quinta run: Fail per SpotBugs (2 bug — falsi positivi su entity JPA)
+
+JaCoCo finalmente verde (≥70%), ma SpotBugs ha bloccato la build con due warning su `MateriaClasse.java`:
+
+| Pattern | Metodo | Problema segnalato |
+|---------|--------|-------------------|
+| `EI_EXPOSE_REP` | `getMateria()` | Ritorna il riferimento interno direttamente — l'esterno potrebbe modificarlo |
+| `EI_EXPOSE_REP2` | `setMateria()` | Memorizza il riferimento esterno — il chiamante potrebbe modificarlo dopo |
+
+**Perché sono falsi positivi:** SpotBugs ha ragione in generale, ma le **entity JPA sono un'eccezione nota**. Hibernate monitora i cambiamenti sull'oggetto reale: se `getMateria()` restituisse una copia, Hibernate non vedrebbe mai le modifiche e il salvataggio sarebbe silenziosamente ignorato. La copia difensiva romperebbe il ciclo di vita dell'ORM.
+
+**Soluzione:** file di esclusione `spotbugs-exclude.xml` + riferimento nel `pom.xml`:
+```xml
+<Match>
+    <Class name="it.scuola.materie_service.model.MateriaClasse"/>
+    <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+</Match>
+```
+```xml
+<!-- in pom.xml, nella configurazione di SpotBugs -->
+<excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
+```
+
+Il file di esclusione è il modo standard per documentare che un warning è stato esaminato e ritenuto inapplicabile — non è un modo per nascondere i bug.
+
+---
+
+### Sesta run: Warning Node.js 20 deprecato
+
+Build completamente verde. Unico warning (non bloccante): le action `actions/checkout@v4` e `actions/setup-java@v4` usano Node.js 20, che GitHub rimuoverà a settembre 2026.
+
+**Soluzione:** aggiornato `.github/workflows/ci.yml` da `@v4` a `@v5`.
+
+**Differenza tra errore e warning nella CI:** un errore blocca la build (exit code ≠ 0), un warning è solo informativo. GitHub mostra entrambi nel tab Actions, ma solo gli errori impediscono il merge.
+
+---
+
+## 5. Gestione branch e Pull Request
 
 **Regola fondamentale:** non si lavora mai direttamente su `main`.
 
-**Branch `main`:** contiene il codice stabile e verificato dalla CI. Build sempre verde.
+**Branch `main`:** contiene il codice stabile e verificato dalla CI. Build sempre verde. Push diretti bloccati dalla branch protection.
 
 **Branch `sviluppo`:** branch di lavoro dove si aggiungono i test e si porta la coverage al 70%.
 
 ```
-main      ──●──────────────────────────────●──→  (stabile, sempre verde)
-              \                            /
-sviluppo       ●──●──●──●──●──●──●──●────●   (lavoro in corso)
+main      ──●────────────────────────────────────●──→  (stabile, solo merge da PR)
+              \                                  ↑
+sviluppo       ●──●──●──●──●──●──●──●──●──●──PR─┘
+                                               (CI verde → merge consentito)
 ```
 
-**Pull Request:** nella pratica professionale, il passaggio da `sviluppo` a `main` avviene tramite pull request — un maintainer rivede il codice e la CI deve essere verde prima del merge.
+### Pull Request — il workflow completo
+
+1. Il developer fa `git push` sul branch `sviluppo`
+2. Su GitHub apre una **Pull Request** da `sviluppo` → `main`
+3. GitHub avvia automaticamente la pipeline sul commit della PR (job `build`)
+4. Il maintainer rivede il codice — può commentare, richiedere modifiche
+5. Se la CI è verde e la review è approvata → **merge**
+6. Il merge su `main` avvia il job `docker` (CD) → immagine pubblicata su ghcr.io
+
+**Perché la CI gira sui commit della PR e non solo sul merge?**
+Permette di scoprire i problemi prima di integrare il codice in `main`. Se la CI fallisce sulla PR, `main` rimane stabile — non viene mai "rotto".
+
+### Branch protection su `main`
+
+Configurabile nelle impostazioni del repository GitHub (`Settings → Branches → Add rule`):
+
+| Regola | Effetto |
+|--------|---------|
+| Require a pull request before merging | Nessun push diretto su `main` |
+| Require status checks to pass | Il job `build` deve essere verde prima del merge |
+| Require approvals | Almeno N maintainer devono approvare la PR |
+
+Queste regole implementano esattamente la distinzione delle slide tra **sviluppatore** (lavora su branch) e **maintainer** (controlla e accetta i cambiamenti sul branch protetto).
 
 ---
 
@@ -335,15 +425,22 @@ Per coprire tutti i branch di `aggiornaMateria` bastano 2 test:
 | Stile del codice | Checkstyle | `pom.xml` + `checkstyle.xml` | Mantiene leggibilità e coerenza |
 | Bad practice | PMD | `pom.xml` | Trova design problematici nel sorgente |
 | Bug nel bytecode | SpotBugs | `pom.xml` | Trova pattern di bug dopo la compilazione |
-| Integrazione continua | GitHub Actions | `.github/workflows/ci.yml` | Esegue tutto ad ogni commit automaticamente |
+| Integrazione continua (CI) | GitHub Actions — job `build` | `.github/workflows/ci.yml` | Esegue build, test e analisi statica ad ogni commit |
+| Consegna continua (CD) | GitHub Actions — job `docker` | `.github/workflows/ci.yml` | Pubblica l'immagine Docker su ghcr.io solo dopo merge su main |
 | Branch | Git | Repository GitHub | Separa codice stabile da sviluppo in corso |
+| Pull Request | GitHub | Interfaccia web | Meccanismo di review e merge controllato su branch protetto |
+| Branch protection | GitHub | Settings → Branches | Impedisce push diretti su main, richiede CI verde |
+| Esclusione falsi positivi | SpotBugs | `spotbugs-exclude.xml` | Documenta i warning esaminati e ritenuti inapplicabili |
 
-### Test file aggiunti/modificati
+### File aggiunti/modificati in questa sessione
 
-| File | Tipo | Tecnica usata |
-|------|------|---------------|
-| `MateriaServiceTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
-| `MateriaClasseServiceTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
-| `MateriaControllerTest` | Unitario Mockito | `@Mock` + `@InjectMocks` |
-| `security/JwtAuthFilterTest` | Unitario Mockito | Stesso package → accesso a `protected` |
-| `filter/VersioningFilterTest` | Unitario Mockito | Stesso package + `ReflectionTestUtils` per `@Value` |
+| File | Tipo | Perché |
+|------|------|--------|
+| `MateriaServiceTest` | Test unitario | +7 test: aggiornaMateria, eliminaMateria, nome duplicato |
+| `MateriaClasseServiceTest` | Test unitario (nuovo) | Copriva 0% di MateriaClasseService |
+| `MateriaControllerTest` | Test unitario | +2 test: aggiornaMateria, eliminaMateria |
+| `security/JwtAuthFilterTest` | Test unitario (nuovo) | Stesso package → accesso a `protected` |
+| `filter/VersioningFilterTest` | Test unitario (nuovo) | Stesso package + `ReflectionTestUtils` per `@Value` |
+| `spotbugs-exclude.xml` | Configurazione (nuovo) | Esclusione falsi positivi EI_EXPOSE_REP su entity JPA |
+| `pom.xml` | Configurazione | Riferimento a `spotbugs-exclude.xml` |
+| `.github/workflows/ci.yml` | CI | Aggiornamento action da v4 a v5 (Node.js 24) |
