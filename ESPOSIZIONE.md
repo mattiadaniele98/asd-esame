@@ -417,7 +417,39 @@ Per coprire tutti i branch di `aggiornaMateria` bastano 2 test:
 
 ---
 
-## Riepilogo finale
+## Riepilogo finale — stato attuale del progetto ✅
+
+### Cosa funziona adesso
+
+| Componente | Stato | Dettaglio |
+|-----------|-------|-----------|
+| CI su ogni push/PR | ✅ Verde | Checkstyle + PMD + SpotBugs + JaCoCo ≥70% |
+| CD su merge a `main` | ✅ Verde | Immagine Docker pubblicata su ghcr.io |
+| Branch `main` protetto | ✅ Attivo | Push diretti bloccati, CI obbligatoria prima del merge |
+| Branch `sviluppo` | ✅ Attivo | Branch di lavoro, tutto il codice sviluppato qui |
+| Pull Request | ✅ Completata | Workflow PR → CI → review → merge → CD dimostrato |
+
+### Il workflow completo dimostrato
+
+```
+1. Sviluppo su branch "sviluppo"
+       ↓
+2. git push → CI gira automaticamente (build verde)
+       ↓
+3. Pull Request su GitHub (sviluppo → main)
+       ↓
+4. CI gira sui commit della PR — se fallisce, merge bloccato
+       ↓
+5. Review del codice (code review)
+       ↓
+6. Merge → CD gira automaticamente → immagine Docker su ghcr.io
+       ↓
+7. main sempre stabile e protetto
+```
+
+---
+
+## Riepilogo strumenti
 
 | Cosa | Strumento | Dove | Perché |
 |------|----------|------|--------|
