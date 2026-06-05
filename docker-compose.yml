@@ -1,0 +1,50 @@
+# ── Docker Compose completo: DB + Servizio ────────────────────────────────────
+# Avvia tutto insieme con: docker compose up -d
+# Ferma tutto con:         docker compose down
+
+services:
+
+  # ── Database PostgreSQL ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    container_name: materie-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: scuola
+      POSTGRES_PASSWORD: scuola_pass
+      POSTGRES_DB: db_materie
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scuola -d db_materie"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Microservizio materie-service ────────────────────────────────────────────
+  materie-service:
+    build: .                          # costruisce l'immagine dal Dockerfile
+    container_name: materie-service
+    ports:
+      - "80:9000"                     # porta esposta → porta interna container
+    environment:
+      SPRING_PROFILES_ACTIVE: sviluppo
+      SERVER_PORT: 9000
+      DB_URL: jdbc:postgresql://postgres:5432/db_materie   # "postgres" = nome del container DB
+      DB_USER: scuola
+      DB_PASSWORD: scuola_pass
+      # PRODUZIONE: non scrivere la chiave in chiaro qui. Questo file viene committato
+      # su Git e la chiave diventerebbe visibile a chiunque abbia accesso al repository.
+      # Creare un file ".env" nella stessa cartella del docker-compose.yml con:
+      #   JWT_CHIAVE_SEGRETA=4f7dca55901487f2df866a449e1716db88181900c248dcc83fe96fd3e70deb6a
+      # Aggiungere ".env" al .gitignore in modo che non venga mai committato.
+      # Docker Compose legge automaticamente il file .env e sostituisce ${JWT_CHIAVE_SEGRETA}.
+      JWT_CHIAVE_SEGRETA: 4f7dca55901487f2df866a449e1716db88181900c248dcc83fe96fd3e70deb6a
+    depends_on:
+      postgres:
+        condition: service_healthy    # aspetta che il DB sia pronto prima di avviarsi
+
+volumes:
+  postgres-data:

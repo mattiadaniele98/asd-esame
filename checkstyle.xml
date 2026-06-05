@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC
+    "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+    "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<module name="Checker">
+
+    <!-- Lunghezza massima di una riga: 120 caratteri -->
+    <module name="LineLength">
+        <property name="max" value="120"/>
+    </module>
+
+    <module name="TreeWalker">
+
+        <!-- ===== IMPORTS ===== -->
+        <!-- Vieta import con wildcard (es. import java.util.*) -->
+        <module name="AvoidStarImport"/>
+        <!-- Segnala import dichiarati ma mai usati -->
+        <module name="UnusedImports"/>
+
+        <!-- ===== NOMI ===== -->
+        <!-- I nomi delle classi devono iniziare con lettera maiuscola -->
+        <module name="TypeName">
+            <property name="format" value="^[A-Z][a-zA-Z0-9]*$"/>
+        </module>
+        <!-- I parametri di tipo generico devono essere una sola lettera maiuscola (es. T, E, K) -->
+        <module name="ClassTypeParameterName">
+            <property name="format" value="^[A-Z]$"/>
+        </module>
+        <!-- I metodi devono iniziare con lettera minuscola (camelCase) -->
+        <module name="MethodName"/>
+        <!-- Le costanti (static final) devono essere UPPER_SNAKE_CASE -->
+        <module name="ConstantName"/>
+
+        <!-- ===== MODIFICATORI ===== -->
+        <!-- L'ordine dei modificatori deve essere: public/protected/private, abstract, static, final, ... -->
+        <module name="ModifierOrder"/>
+        <!-- Segnala modificatori ridondanti (es. public su metodi di un'interfaccia) -->
+        <module name="RedundantModifier"/>
+
+        <!-- ===== WHITESPACE ===== -->
+        <!-- Dopo virgole, punto e virgola, cast deve esserci uno spazio -->
+        <module name="WhitespaceAfter"/>
+        <!-- Intorno agli operatori (=, +, -, ecc.) deve esserci uno spazio -->
+        <module name="WhitespaceAround">
+            <property name="allowEmptyConstructors" value="true"/>
+            <property name="allowEmptyMethods" value="true"/>
+        </module>
+        <!-- Nessuno spazio dopo parentesi aperta o prima di parentesi chiusa -->
+        <module name="NoWhitespaceAfter"/>
+        <module name="NoWhitespaceBefore"/>
+
+        <!-- ===== COMPLESSITÀ ===== -->
+        <!-- Complessità ciclomatica di McCabe: massimo 10 percorsi indipendenti per metodo -->
+        <module name="CyclomaticComplexity">
+            <property name="max" value="10"/>
+        </module>
+
+        <!-- ===== BLOCCHI ===== -->
+        <!-- Vieta blocchi vuoti (es. catch vuoti che ingoiano le eccezioni) -->
+        <module name="EmptyBlock"/>
+        <!-- Le parentesi graffe sono obbligatorie anche per blocchi con una sola riga -->
+        <module name="NeedBraces"/>
+
+        <!-- ===== VARIE ===== -->
+        <!-- Un file deve avere esattamente una classe di primo livello -->
+        <module name="OneTopLevelClass"/>
+        <!-- Nessuna istruzione in una sola riga (es. if (x) return;) -->
+        <module name="OneStatementPerLine"/>
+
+    </module>
+
+</module>

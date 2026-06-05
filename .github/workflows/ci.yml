@@ -1,0 +1,59 @@
+name: CI
+
+# La pipeline si avvia ad ogni push e ad ogni pull request, su qualsiasi branch
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build:
+    name: Build, Test e Analisi Statica
+    runs-on: ubuntu-latest   # macchina virtuale Linux fornita da GitHub
+
+    # Servizi aggiuntivi: GitHub avvia questi container prima degli step
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: scuola
+          POSTGRES_PASSWORD: scuola_pass
+          POSTGRES_DB: db_materie
+        ports:
+          - 5432:5432
+        # GitHub aspetta che PostgreSQL sia pronto prima di procedere
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+
+      # Step 1: scarica il codice del repository sul runner
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      # Step 2: installa Java 21 (Temurin = distribuzione open source di Eclipse)
+      # cache: 'maven' mette in cache ~/.m2 per non riscaricare le dipendenze ad ogni run
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Step 3: mvn verify esegue in ordine:
+      #   validate    → Checkstyle (stile del codice)
+      #   compile     → compilazione del sorgente
+      #   test        → test unitari + JaCoCo report
+      #   package     → crea il JAR
+      #   verify      → JaCoCo check + PMD + SpotBugs
+      - name: Build, test e analisi statica
+        run: mvn verify
+        env:
+          DB_URL: jdbc:postgresql://localhost:5432/db_materie
+          DB_USER: scuola
+          DB_PASSWORD: scuola_pass
+          SPRING_PROFILES_ACTIVE: sviluppo

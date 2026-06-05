@@ -1,0 +1,23 @@
+# ── Solo Database per sviluppo locale ─────────────────────────────────────────
+# Avvia SOLO PostgreSQL, senza il microservizio.
+# Il microservizio lo avvii con: ./mvnw spring-boot:run
+#
+# Comando: docker compose -f docker-compose-dev.yml up -d
+# Stop:    docker compose -f docker-compose-dev.yml down
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: scuola-postgres-dev
+    restart: always
+    environment:
+      POSTGRES_USER: scuola
+      POSTGRES_PASSWORD: scuola_pass
+      POSTGRES_DB: db_materie   # crea già il database che serve a materie-service
+    ports:
+      - "5432:5432"             # espone PostgreSQL sulla porta 5432 dell'host
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data  # i dati persistono tra riavvii
+
+volumes:
+  postgres-dev-data:
